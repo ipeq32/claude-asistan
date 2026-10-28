@@ -1,7 +1,9 @@
 export type SecretMode = 'warn' | 'mask' | 'block'
 export type ImproveMode = 'prefix' | 'always'
 export type BudgetMode = 'warn' | 'block'
-export type Tab = 'ozet' | 'prompt' | 'guvenlik' | 'kod' | 'sozluk' | 'ayarlar'
+export type Tab = 'ozet' | 'prompt' | 'guvenlik' | 'kod' | 'zaman' | 'sozluk' | 'ayarlar'
+export type Lang = 'tr' | 'en'
+export type ModelProvider = 'haiku' | 'ollama'
 
 export type AsistanSettings = {
   secretMode: SecretMode
@@ -22,6 +24,16 @@ export type AsistanSettings = {
   glossary: boolean
   modelHints: boolean
   autoTests: boolean
+  language: Lang
+  // Where the mod's own model calls go: Haiku, or a local Ollama model whose
+  // calls never leave the machine.
+  modelProvider: ModelProvider
+  ollamaModel: string | null
+  // Long turns and limit warnings also go to Telegram or Discord.
+  remoteNotify: boolean
+  // After each turn, compare what was done with the project's CLAUDE.md.
+  rulesCheck: boolean
+  costEstimate: boolean
 }
 
 export type PromptRecord = {
@@ -135,6 +147,21 @@ export type PackageCheck = {
 
 export type Term = { term: string; tr: string }
 
+export type TimelineRow = { id: string; tool: string; label: string; ms: number; isOk: boolean; at: number }
+
+export type TurnStat = { turn: number; label: string; tokens: number; usd: number; ms: number }
+
+export type VulnRow = { name: string; version: string; ids: string[] }
+
+export type VulnScan = { state: 'running' | 'done'; checked: number; rows: VulnRow[]; note: string }
+
+export type HistoryScan = {
+  state: 'running' | 'done'
+  commits: number
+  hits: { sha: string; file: string; kind: string }[]
+  note: string
+}
+
 declare module 'claude-code' {
   interface PluginState {
     asistan: {
@@ -158,6 +185,13 @@ declare module 'claude-code' {
       network: Shaped<NetRow[]>
       packages: Shaped<PackageCheck[]>
       glossary: Shaped<Term[]>
+      timeline: Shaped<TimelineRow[]>
+      turnStats: Shaped<TurnStat[]>
+      vulnScan: Shaped<VulnScan | null>
+      historyScan: Shaped<HistoryScan | null>
+      teamTemplates: Shaped<Template[]>
+      rules: string | null
+      estimate: string | null
       warning: string | null
       busy: string | null
       tab: Tab

@@ -2,7 +2,7 @@ import { expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
-import { codeBlocksIn, gitOps, isSensitivePath, lookalikeOf, maskOutput, parseInstalls } from './lib'
+import { codeBlocksIn, gitOps, historyReader, isSensitivePath, lookalikeOf, maskOutput, npmLockPackages, parseInstalls, requirementPins } from './lib'
 
 // The kit fills origin, wait and presentation as the engine would.
 const submit = ($: Engine, text: string) =>
@@ -35,6 +35,7 @@ const PANE_PROPS = {
 const world = (on: On) => {
   mock.clock(on)
   mock.store(on)
+  mock.env(on, { HOME: '/home/u' })
   on('session.cwd', () => ({ value: '/p' }))
   on('ui.toast', () => ({ value: undefined }))
   on('ui.status', () => ({ value: undefined }))
@@ -76,7 +77,7 @@ test('++ ile başlayan prompt İngilizceye çevrilir, Türkçe yanıt istenir', 
   const sent = await submit($, '++ src/auth.ts deki login hatasını düzelt')
 
   expect(sent.text).toBe('Fix the login bug in src/auth.ts.')
-  expect(sent.context?.[0]).toContain('Reply to the user in Turkish')
+  expect(sent.context?.[0]).toContain('Reply to the user in the language of that original request')
   expect(sent.context?.[0]).toContain('src/auth.ts deki login hatasını düzelt')
 })
 
@@ -177,14 +178,22 @@ test('yardımcılar', () => {
   expect(env.text).toContain('DEBUG=true')
   expect(maskOutput('const password = process.env.DB_PASSWORD\napiKey: config.apiKey').kinds.length).toBe(0)
 
-  expect(gitOps('cd web && git -C sub add -A && git commit -am "fix"')).toEqual([
+  expect(gitOps('cd web && git -C sub add -A && git commit -am "fix" && git push origin main')).toEqual([
     { sub: 'add', args: ['-A'], dir: 'sub' },
     { sub: 'commit', args: ['-am', 'fix'], dir: 'web' },
+    { sub: 'push', args: ['origin', 'main'], dir: 'web' },
   ])
 
-  expect(parseInstalls('cd x && npm i -D @types/node lodash@4 ./local && pip install "requests[socks]>=2" -r req.txt')).toEqual([
-    { ecosystem: 'npm', names: ['@types/node', 'lodash'] },
-    { ecosystem: 'pypi', names: ['requests'] },
+  expect(parseInstalls('cd x && npm i -D @types/node lodash@4.17.20 ./local && pip install "requests[socks]==2.19.0" -r req.txt')).toEqual([
+    {
+      ecosystem: 'npm',
+      names: ['@types/node', 'lodash'],
+      packages: [
+        { name: '@types/node', version: null },
+        { name: 'lodash', version: '4.17.20' },
+      ],
+    },
+    { ecosystem: 'pypi', names: ['requests'], packages: [{ name: 'requests', version: '2.19.0' }] },
   ])
   expect(parseInstalls('npm install')).toEqual([])
 
@@ -226,4 +235,104 @@ test('değişen dosya oturum başındaki haline geri alınır', async ($, on) =>
   await ui.unmount()
 
   expect(written).toEqual([{ path: '/p/a.txt', text: 'eski içerik\n' }])
+})
+
+test('bilinen açığı olan sürüm uyarılır, kurulum durmaz', async ($, on) => {
+  world(on)
+  on('http.fetch', (_, e) => {
+    const url = (e as { url: string }).url
+    const body = url.includes('osv.dev')
+      ? { vulns: [{ id: 'GHSA-x', aliases: ['CVE-2021-23337'], affected: [{ ranges: [{ events: [{ introduced: '0' }, { fixed: '4.17.21' }] }] }] }] }
+      : url.includes('downloads')
+        ? { downloads: 50000000 }
+        : { time: { created: '2012-04-23T00:00:00.000Z' }, 'dist-tags': { latest: '4.17.21' } }
+    return { value: { status: 200, ok: true, headers: {}, text: JSON.stringify(body) } }
+  })
+  on('tool.call', () => ({ result: {} }))
+
+  const ran = await call($, { tool: 'Bash', command: 'npm install lodash@4.17.20' })
+  expect(ran.deny).toBeUndefined()
+
+  const ui = await $.ui.mount({ plugin: 'asistan', surface: 'terminal', component: 'Pane', requestId: 'asistan', props: PANE_PROPS })
+  await ui.press({ key: 'tab-guvenlik' })
+  expect((await ui.find({ type: 'Text', text: /CVE-2021-23337/ }))?.text).toContain('4.17.21')
+  await ui.unmount()
+})
+
+test('yerel model seçilince istek Ollamaya gider, Haikuya gitmez', async ($, on) => {
+  world(on)
+  const urls: string[] = []
+  let isHaikuCalled = false
+  on('model.complete', () => {
+    isHaikuCalled = true
+    return { value: { isAnswered: true, text: '{}', usage: USAGE } }
+  })
+  on('http.fetch', (_, e) => {
+    const url = (e as { url: string }).url
+    urls.push(url)
+    const body = url.endsWith('/api/tags')
+      ? { models: [{ name: 'llama3.1' }] }
+      : { message: { content: '{"en": "Rename foo to bar.", "tr": "foo adını bar yap.", "score": 8, "missing": [], "added": []}' } }
+    return { value: { status: 200, ok: true, headers: {}, text: JSON.stringify(body) } }
+  })
+  on('prompt.submit', (_, e) => ({ text: e.text }))
+
+  const ui = await $.ui.mount({ plugin: 'asistan', surface: 'terminal', component: 'Pane', requestId: 'asistan', props: PANE_PROPS })
+  await ui.press({ key: 'tab-ayarlar' })
+  await ui.press({ key: 'model-provider' })
+  expect((await ui.find({ key: 'model-provider' }))?.text).toContain('llama3.1')
+  await ui.unmount()
+
+  const sent = await submit($, '++ foo adını bar yap')
+  expect(sent.text).toBe('Rename foo to bar.')
+  expect(urls.some(url => url.endsWith('/api/chat'))).toBe(true)
+  expect(isHaikuCalled).toBe(false)
+})
+
+test('dil İngilizceye geçer', async ($, on) => {
+  world(on)
+  on('command.run', () => ({ text: 'engine' }))
+  await run($, 'dil', 'en')
+  const ui = await $.ui.mount({ plugin: 'asistan', surface: 'terminal', component: 'Pane', requestId: 'asistan', props: PANE_PROPS })
+  expect((await ui.find({ type: 'Text', text: /Efficiency/ }))?.text).toContain('Efficiency')
+  await ui.press({ key: 'tab-zaman' })
+  expect((await ui.find({ type: 'Text', text: /Slowest calls/ }))?.text).toContain('Slowest')
+  await ui.unmount()
+})
+
+test('zaman çizelgesi araç çağrılarını sayar', async ($, on) => {
+  world(on)
+  on('tool.call', () => ({ result: {} }))
+  await call($, { tool: 'Bash', command: 'ls -la' })
+  const ui = await $.ui.mount({ plugin: 'asistan', surface: 'terminal', component: 'Pane', requestId: 'asistan', props: PANE_PROPS })
+  await ui.press({ key: 'tab-zaman' })
+  expect((await ui.find({ type: 'Text', text: /ls -la/ }))?.text).toContain('Bash')
+  await ui.unmount()
+})
+
+test('geçmiş, kilit dosyası ve requirements okuyucuları', () => {
+  const reader = historyReader()
+  const lines = [
+    'commit 1111111111111111',
+    '+++ b/.env',
+    `+OPENAI_API_KEY=${KEY}`,
+    'commit 2222222222222222',
+    '+++ b/src/a.ts',
+    '+const a = 1',
+  ]
+  for (const line of lines) reader.line(line)
+  const { hits, commits } = reader.result()
+  expect(commits).toBe(2)
+  expect(hits.map(one => one.kind)).toEqual(['hassas dosya', 'OpenAI anahtarı'])
+
+  expect(
+    npmLockPackages(JSON.stringify({ packages: { '': {}, 'node_modules/lodash': { version: '4.17.20' }, 'node_modules/a/node_modules/@x/y': { version: '1.0.0' } } })),
+  ).toEqual([
+    { name: 'lodash', version: '4.17.20' },
+    { name: '@x/y', version: '1.0.0' },
+  ])
+  expect(requirementPins('requests==2.19.0\nflask>=2\n# yorum\nDjango[argon2] == 4.2.1')).toEqual([
+    { name: 'requests', version: '2.19.0' },
+    { name: 'Django', version: '4.2.1' },
+  ])
 })

@@ -1,10 +1,32 @@
 {
   "name": "asistan",
-  "version": "0.2.0",
-  "description": "Claude Code için Türkçe asistan paneli: anahtar ve paket koruması, prompt iyileştirme (TR→EN), verimlilik skoru, maliyet takibi, değişen dosyalar, testler ve terim sözlüğü",
+  "version": "0.3.0",
+  "description": "A side pane for Claude Code: key, package and git guards, prompt improving, cost and efficiency tracking, changed files, tests, timeline and a glossary. Turkish and English.",
   "author": { "name": "ipeq32" },
   "license": "MIT",
   "repository": "https://github.com/ipeq32/claude-asistan",
-  "keywords": ["turkish", "türkçe", "security", "prompt", "cost", "panel"],
-  "types": "./types/index.d.ts"
+  "keywords": ["turkish", "türkçe", "security", "prompt", "cost", "panel", "ollama"],
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "telegramBotToken": {
+      "type": "string",
+      "title": "Telegram bot token",
+      "description": "Token of the bot that sends turn and limit notifications (from @BotFather). Leave empty to skip Telegram.",
+      "sensitive": true,
+      "default": ""
+    },
+    "telegramChatId": {
+      "type": "string",
+      "title": "Telegram chat id",
+      "description": "The chat the bot writes to.",
+      "default": ""
+    },
+    "discordWebhookUrl": {
+      "type": "string",
+      "title": "Discord webhook URL",
+      "description": "A channel webhook for the same notifications. Leave empty to skip Discord.",
+      "sensitive": true,
+      "default": ""
+    }
+  }
 }

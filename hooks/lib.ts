@@ -1,5 +1,11 @@
 // Pure helpers: nothing here reaches `$`.
-import type { AsistanSettings, CodeBlock, Metrics, SecretMode } from '../types'
+import type { AsistanSettings, CodeBlock, Lang, Metrics, SecretMode } from '../types'
+
+// ---- language -------------------------------------------------------------------
+
+export const say = (lang: Lang, tr: string, en: string) => (lang === 'en' ? en : tr)
+
+export const langName = (lang: Lang) => (lang === 'en' ? 'English' : 'Turkish')
 
 // ---- secrets ------------------------------------------------------------------
 
@@ -83,10 +89,9 @@ export const secretRanges = (text: string): [number, number][] => {
   return merged
 }
 
-export const MODE_LABEL: Record<SecretMode, string> = {
-  warn: 'Uyar',
-  mask: 'Maskele',
-  block: 'Engelle',
+export const MODE_LABEL: Record<Lang, Record<SecretMode, string>> = {
+  tr: { warn: 'Uyar', mask: 'Maskele', block: 'Engelle' },
+  en: { warn: 'Warn', mask: 'Mask', block: 'Block' },
 }
 export const NEXT_MODE: Record<SecretMode, SecretMode> = { warn: 'mask', mask: 'block', block: 'warn' }
 
@@ -134,9 +139,9 @@ export const shellWords = (text: string): string[] =>
 
 export const shellQuote = (text: string) => `'${text.replace(/'/g, `'\\''`)}'`
 
-export type GitOp = { sub: 'add' | 'commit'; args: string[]; dir: string | undefined }
+export type GitOp = { sub: 'add' | 'commit' | 'push'; args: string[]; dir: string | undefined }
 
-// The `git add` and `git commit` a command line runs, each with the folder
+// The `git add`, `git commit` and `git push` a command line runs, each with the folder
 // it runs in as far as a `cd` or `-C` before it says.
 export const gitOps = (command: string): GitOp[] => {
   let dir: string | undefined
@@ -157,7 +162,7 @@ export const gitOps = (command: string): GitOp[] => {
       i += flag === '-C' || flag === '-c' ? 2 : 1
     }
     const sub = words[i]
-    if (sub === 'add' || sub === 'commit') ops.push({ sub, args: words.slice(i + 1), dir: segmentDir })
+    if (sub === 'add' || sub === 'commit' || sub === 'push') ops.push({ sub, args: words.slice(i + 1), dir: segmentDir })
   }
   return ops
 }
@@ -288,6 +293,12 @@ export const DEFAULT_SETTINGS: AsistanSettings = {
   glossary: true,
   modelHints: true,
   autoTests: true,
+  language: 'tr',
+  modelProvider: 'haiku',
+  ollamaModel: null,
+  remoteNotify: false,
+  rulesCheck: true,
+  costEstimate: true,
 }
 
 export const EMPTY_METRICS: Metrics = {
@@ -319,7 +330,8 @@ export const projectOf = (cwd: string) => cwd.split('/').filter(Boolean).pop() ?
 
 // ---- packages ----------------------------------------------------------------------
 
-export type Install = { ecosystem: 'npm' | 'pypi'; names: string[] }
+export type Pkg = { name: string; version: string | null }
+export type Install = { ecosystem: 'npm' | 'pypi'; names: string[]; packages: Pkg[] }
 
 const NPM_MANAGERS = new Set(['npm', 'pnpm', 'yarn', 'bun'])
 const NPM_VERBS = new Set(['install', 'i', 'in', 'add'])
@@ -346,8 +358,12 @@ export const parseInstalls = (command: string): Install[] => {
     if (words[0] === 'sudo') words = words.slice(1)
     const [tool = '', verb = ''] = words
     if (NPM_MANAGERS.has(tool) && NPM_VERBS.has(verb)) {
-      const names = words.slice(2).filter(w => !w.startsWith('-')).map(npmName).filter((n): n is string => n !== null)
-      if (names.length) found.push({ ecosystem: 'npm', names })
+      const packages = words
+        .slice(2)
+        .filter(w => !w.startsWith('-'))
+        .map(spec => ({ name: npmName(spec), version: /^@?[^@]+@(\d[\w.+-]*)$/.exec(spec)?.[1] ?? null }))
+        .filter((one): one is Pkg => one.name !== null)
+      if (packages.length) found.push({ ecosystem: 'npm', names: packages.map(one => one.name), packages })
       continue
     }
     let rest: string[] | null = null
@@ -356,7 +372,7 @@ export const parseInstalls = (command: string): Install[] => {
     else if (tool === 'uv' && verb === 'pip' && words[2] === 'install') rest = words.slice(3)
     else if ((tool === 'uv' || tool === 'poetry' || tool === 'pipenv') && (verb === 'add' || verb === 'install')) rest = words.slice(2)
     if (rest === null) continue
-    const names: string[] = []
+    const packages: Pkg[] = []
     for (let i = 0; i < rest.length; i += 1) {
       const word = rest[i] ?? ''
       if (PIP_VALUE_FLAGS.has(word)) {
@@ -365,9 +381,9 @@ export const parseInstalls = (command: string): Install[] => {
       }
       if (word.startsWith('-')) continue
       const name = pypiName(word)
-      if (name !== null) names.push(name)
+      if (name !== null) packages.push({ name, version: /==\s*([\w.+-]+)/.exec(word)?.[1] ?? null })
     }
-    if (names.length) found.push({ ecosystem: 'pypi', names })
+    if (packages.length) found.push({ ecosystem: 'pypi', names: packages.map(one => one.name), packages })
   }
   return found
 }
@@ -442,3 +458,65 @@ export const codeBlocksIn = (text: string): CodeBlock[] => {
   }
   return blocks
 }
+
+
+// ---- dependencies ---------------------------------------------------------------------
+
+// The exact versions a package-lock.json pins.
+export const npmLockPackages = (text: string): Pkg[] => {
+  const packages = parseJson(text)?.packages
+  if (typeof packages !== 'object' || packages === null) return []
+  const seen = new Map<string, Pkg>()
+  for (const [path, info] of Object.entries(packages as Record<string, unknown>)) {
+    const at = path.lastIndexOf('node_modules/')
+    if (at < 0) continue
+    const version = (info as { version?: unknown } | null)?.version
+    const name = path.slice(at + 'node_modules/'.length)
+    if (typeof version === 'string') seen.set(`${name}@${version}`, { name, version })
+  }
+  return [...seen.values()]
+}
+
+// The `name==version` pins of a requirements file.
+export const requirementPins = (text: string): Pkg[] =>
+  text
+    .split('\n')
+    .map(line => /^\s*([A-Za-z0-9][A-Za-z0-9._-]*)(?:\[[^\]]*\])?\s*==\s*([\w.+-]+)/.exec(line))
+    .filter((m): m is RegExpExecArray => m !== null)
+    .map(m => ({ name: m[1] ?? '', version: m[2] ?? null }))
+
+// ---- history scan ---------------------------------------------------------------------
+
+export type HistoryHit = { sha: string; file: string; kind: string }
+
+// Reads `git log -p --format='commit %H'` line by line: the commit and file
+// each added line belongs to, and the keys and sensitive files it adds.
+export const historyReader = () => {
+  let sha = ''
+  let file = ''
+  const hits: HistoryHit[] = []
+  const seen = new Set<string>()
+  let commits = 0
+  const hit = (kind: string) => {
+    const key = `${sha}|${file}|${kind}`
+    if (seen.has(key) || hits.length >= 50) return
+    seen.add(key)
+    hits.push({ sha: sha.slice(0, 8), file, kind })
+  }
+  return {
+    line(text: string) {
+      if (text.startsWith('commit ')) {
+        sha = text.slice(7).trim()
+        commits += 1
+      } else if (text.startsWith('+++ ')) {
+        file = text.slice(4).replace(/^b\//, '')
+        if (file !== '/dev/null' && isSensitivePath(file)) hit('hassas dosya')
+      } else if (text.startsWith('+')) {
+        for (const kind of findSecrets(text.slice(1), true)) hit(kind)
+      }
+    },
+    result: () => ({ hits, commits }),
+  }
+}
+
+export const estimateTokens = (text: string) => Math.ceil(text.length / 3.5)

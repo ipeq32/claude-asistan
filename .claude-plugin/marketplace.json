@@ -1,6 +1,6 @@
 {
   "name": "claude-asistan",
-  "description": "Claude Code için Türkçe asistan paneli",
+  "description": "A side pane for Claude Code (Turkish / English)",
   "owner": {
     "name": "ipeq32"
   },
