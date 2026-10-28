@@ -1,0 +1,10 @@
+{
+  "name": "asistan",
+  "version": "0.2.0",
+  "description": "Claude Code için Türkçe asistan paneli: anahtar ve paket koruması, prompt iyileştirme (TR→EN), verimlilik skoru, maliyet takibi, değişen dosyalar, testler ve terim sözlüğü",
+  "author": { "name": "ipeq32" },
+  "license": "MIT",
+  "repository": "https://github.com/ipeq32/claude-asistan",
+  "keywords": ["turkish", "türkçe", "security", "prompt", "cost", "panel"],
+  "types": "./types/index.d.ts"
+}

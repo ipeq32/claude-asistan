@@ -1,0 +1,13 @@
+{
+  "name": "claude-asistan",
+  "description": "Claude Code için Türkçe asistan paneli",
+  "owner": {
+    "name": "ipeq32"
+  },
+  "plugins": [
+    {
+      "name": "asistan",
+      "source": "./"
+    }
+  ]
+}
